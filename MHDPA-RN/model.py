@@ -412,7 +412,7 @@ class RN2(BasicModel):
 
 
 class MHDPARelationModule(nn.Module) :
-    def __init__(self,output_dim=32, qst_dim=11, depth_dim=24,interactions_dim=64, hidden_size=256, use_cuda=True) :
+    def __init__(self,output_dim=32, qst_dim=11, depth_dim=24,interactions_dim=64, hidden_size=256, use_cuda=True, withLNGenerator=False) :
         super(MHDPARelationModule,self).__init__()
 
         self.use_cuda = use_cuda
@@ -423,10 +423,25 @@ class MHDPARelationModule(nn.Module) :
         self.hidden_size = hidden_size
         self.fXY = None 
         self.batch = None 
+        self.withLNGenerator = withLNGenerator
 
-        self.queryGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
-        self.keyGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
-        self.valueGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
+        if not(self.withLNGenerator):
+            self.queryGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
+            self.keyGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
+            self.valueGenerator = nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False)
+        else :
+            self.queryGenerator = nn.Sequential( 
+                nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False),
+                nn.LayerNorm(self.interactions_dim,elementwise_affine=False)
+                )
+            self.keyGenerator = nn.Sequential( 
+                nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False),
+                nn.LayerNorm(self.interactions_dim,elementwise_affine=False)
+                )
+            self.valueGenerator = nn.Sequential( 
+                nn.Linear(self.depth_dim+2+self.qst_dim,self.interactions_dim,bias=False),
+                nn.LayerNorm(self.interactions_dim,elementwise_affine=False)
+                )
 
         self.f0 = nn.Linear(self.interactions_dim,self.hidden_size)
         #torch.nn.init.xavier_normal_(self.f0.weight)
@@ -598,11 +613,13 @@ class MHDPARelationModule(nn.Module) :
 
 
 class MHDPARelationNetwork(nn.Module) :
-    def __init__(self,output_dim=32,depth_dim=24,qst_dim=11, nbrModule=3,nbrRecurrentSharedLayers=1,use_cuda=True,spatialDim=7,withMaxPool=False) :
+    def __init__(self,output_dim=32,depth_dim=24,qst_dim=11, nbrModule=3,nbrRecurrentSharedLayers=1,use_cuda=True,spatialDim=7,withMaxPool=False, withLNGenerator=False,args=None) :
         super(MHDPARelationNetwork,self).__init__()
 
         self.withMaxPool = withMaxPool
-        
+        self.withLNGenerator = withLNGenerator
+        self.args = args 
+
         self.use_cuda = use_cuda
         self.spatialDim = spatialDim
         self.output_dim = output_dim
@@ -611,8 +628,12 @@ class MHDPARelationNetwork(nn.Module) :
 
         self.nbrModule = nbrModule
         self.nbrRecurrentSharedLayers = nbrRecurrentSharedLayers
-        self.units_per_MLP_layer = self.output_dim*8#384 
-        self.interactions_dim = self.output_dim*4#32
+        self.units_per_MLP_layer = self.output_dim*8#384
+        if args.units_per_MLP_layer != 0:
+            self.units_per_MLP_layer = args.units_per_MLP_layer 
+        self.interactions_dim = args.interactions_dim 
+        if self.interactions_dim==0 :
+            self.interactions_dim = self.output_dim*4#32
         self.trans = None 
         self.use_bias = False 
 
@@ -622,11 +643,16 @@ class MHDPARelationNetwork(nn.Module) :
                 qst_dim=self.qst_dim,
                 depth_dim=self.depth_dim,
                 interactions_dim=self.interactions_dim,
+                withLNGenerator=self.withLNGenerator,
                 use_cuda=self.use_cuda) )
+
+        self.nonLinearModule = nn.LeakyReLU
+        if self.args.withReLU :
+            self.nonLinearModule = nn.ReLU 
 
         # F function :
         self.finalParallelLayer = nn.Sequential( nn.Linear(self.nbrModule*self.interactions_dim,self.units_per_MLP_layer,bias=self.use_bias),
-                                        nn.LeakyReLU(),
+                                        self.nonLinearModule(),
                                         nn.Linear(self.units_per_MLP_layer,self.depth_dim+2+self.qst_dim,bias=self.use_bias)                                              
                                                 )
         
@@ -639,7 +665,7 @@ class MHDPARelationNetwork(nn.Module) :
             self.finalLayer_input_dim = int( (self.depth_dim+2+self.qst_dim) * self.spatialDim*self.spatialDim )
 
         self.finalLayer = nn.Sequential( nn.Linear(self.finalLayer_input_dim,self.units_per_MLP_layer,bias=self.use_bias),
-                                        nn.LeakyReLU(),
+                                        self.nonLinearModule(),
                                         nn.Linear(self.units_per_MLP_layer,self.output_dim,bias=self.use_bias))
 
         
@@ -726,6 +752,9 @@ class MHDPARelationNetwork(nn.Module) :
         if not(self.withMaxPool) :
             intermediateOutput = intermediateOutput.view( (self.batchsize, -1) )    
 
+        if self.args.dropout_prob != 0.0 :
+            intermediateOutput = F.dropout(intermediateOutput, p=self.args.dropout_prob)
+
         foutput = self.finalLayer(intermediateOutput)
 
         #elt = time.time() - begin 
@@ -739,13 +768,36 @@ class MHDPA_RN(BasicModel):
         path = 'MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
         if args.withMaxPool :
             path += '+MaxPool'
+        if args.withSSM :
+            path += '+SSM'
+        if args.withLNGenerator :
+            path += '+LNGen'
+        if args.withReLU :
+            path += '+ReLU'
+        if args.interactions_dim!=0:
+            path += '+InterDim{}'.format(args.interactions_dim)
+        if args.units_per_MLP_layer!=0:
+            path += '+MLP{}'.format(args.units_per_MLP_layer)
+        if args.dropout_prob!=0.0 :
+            path += '+DropOut{}'.format(args.dropout_prob)
 
         super(MHDPA_RN, self).__init__(args, path)
         
+        self.args = args
         self.conv = ConvInputModel()
         
         ##(number of filters per object+2 depth for the coordinates of object)*2+question vector
-        self.relationModule = MHDPARelationNetwork(output_dim=10,depth_dim=24,qst_dim=11,nbrModule=args.nbrModule, nbrRecurrentSharedLayers=args.nbrRecurrentSharedLayers, spatialDim=5, use_cuda=True,withMaxPool=args.withMaxPool )
+        self.relationModule = MHDPARelationNetwork(output_dim=10,
+                depth_dim=24,
+                qst_dim=11,
+                nbrModule=args.nbrModule, 
+                nbrRecurrentSharedLayers=args.nbrRecurrentSharedLayers, 
+                spatialDim=5, 
+                use_cuda=True,
+                withMaxPool=args.withMaxPool, 
+                withLNGenerator=args.withLNGenerator, 
+                args=args 
+                )
         
         for name,p in self.named_parameters() :
             print(name)
@@ -762,6 +814,11 @@ class MHDPA_RN(BasicModel):
         depthsize = xsize[1]
         dsize = xsize[2]
         featuresize = dsize*dsize
+
+        if self.args.withSSM :
+            x = x.view(batchsize,depthsize,featuresize)
+            x = F.softmax(x,dim=2)
+            x = x.view(batchsize,depthsize,dsize,dsize)
 
         self.output = self.relationModule(x,qst=qst)
 

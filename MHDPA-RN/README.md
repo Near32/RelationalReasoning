@@ -1,6 +1,6 @@
-Pytorch re-implementation of Relational Networks - [A simple neural network module for relational reasoning](https://arxiv.org/pdf/1706.01427.pdf)
+Pytorch re-implementation of Relational Module for Relational Reinforcement Learning (RRL) based on Multi-Head Dot-Product Attention (MHDPA) - [Relational Deep Reinforcement Learning](https://arxiv.org/abs/1806.01830). 
 
-Implemented & tested on Sort-of-CLEVR task.
+Contrary to testing in RL setting like in the paper, here we test on Sort-of-CLEVR in order to compare with other implementation relevant to that benchmark.
 
 ## Sort-of-CLEVR
 
@@ -47,18 +47,33 @@ And relational questions:
 
 ## Usage
 
- 	 $ python main.py 
+Best settings :
+* use LeakyReLU (give better results than ReLU ('withReLU' argument) )
+* Adam optimizer
+* learning rate : 1e-4 (default)
+* batch size : 64 (default)
+* number of MHDPA head :: 'nbrModule' : 4
+* number of recurrent application :: 'nbrRecurrentSharedLayer' : 2
+* layer normalization applied after the key,query, and value generators : [x]
+* dimension of the key, query, and value interaction vectors :: 'interactions_dim' : 128 
+* number of hidden neurons per MLP layer :: 'units_per_MLP_layer' : 128
+* dropout probability :: 'dropout_prob' : 0.0 (default)
 
-to train.
+Train using :
+
+ 	 $ python main.py --model=MHDPA-RN --epochs=20 --nbrModule=4 --nbrRecurrentSharedLayer=2 --withLNGenerator --interactions_dim=128 --units_per_MLP_layer=128 
+
 
 ## Results
 
-| | Relational Networks (20th epoch) | CNN + MLP (without RN, 100th epoch) |
-| --- | --- | --- |
-| Non-relational question | 99% | 66% |
-| Relational question | 89% | 66% |
+| | Relational (MHDPA) Module (20th epoch) | Relational Networks (20th epoch) | CNN + MLP (without RN, 100th epoch) |
+| --- | --- | --- | --- |
+| Non-relational question | 99% | 99% | 66% |
+| Relational question | 88% | 89% | 66% |
 
-Relational networks shows far better results in relational questions and non-relation questions. 
+You can observe the results in Tensorboard via TensorboardX :
+
+![result](/results/result.png)
 
 
 ## Disclaimer

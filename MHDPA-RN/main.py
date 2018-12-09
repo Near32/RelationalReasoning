@@ -40,6 +40,16 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
 parser.add_argument('--resume', type=str,
                     help='resume from model stored')
 parser.add_argument('--withMaxPool',action='store_true',default=False)
+parser.add_argument('--withSSM',action='store_true',default=False)
+parser.add_argument('--withReLU',action='store_true',default=False)
+parser.add_argument('--withLNGenerator',action='store_true',default=False)
+parser.add_argument('--interactions_dim', type=int, default=0,
+                    help='dimension of the entities interaction (default set to 0 --> 4*output_dim)')
+parser.add_argument('--units_per_MLP_layer', type=int, default=0,
+                    help='nbr units per MLP layer (default set to 0 --> 8*output_dim)')
+parser.add_argument('--dropout_prob', type=float, default=0.0,
+                    help='dropout probability just before the final FCN (default: 0.0)')
+
     
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
