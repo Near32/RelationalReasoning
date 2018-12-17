@@ -134,7 +134,7 @@ def test(epoch, rel, norel):
     
 def load_data():
     print('loading data...')
-    dirs = '../data'
+    dirs = '../DATASTETS'
     filename = os.path.join(dirs,'sort-of-clevr.pickle')
     with open(filename, 'rb') as f:
       train_datasets, test_datasets = pickle.load(f)
