@@ -41,8 +41,8 @@ Train using :
 
 ## Results
 
-| Sequential Attention Relation Network (20th epoch) | Relational (MHDPA) Module (20th epoch) | Relational Networks (20th epoch) | CNN + MLP (without RN, 100th epoch) |
-| --- | --- | --- | --- |
+| | Sequential Attention Relation Network (20th epoch) | Relational (MHDPA) Module (20th epoch) | Relational Networks (20th epoch) | CNN + MLP (without RN, 100th epoch) |
+| --- | --- | --- | --- | --- |
 | Non-relational question | 99% | 99% | 99% | 66% |
 | Relational question | 93% | 88% | 89% | 66% |
 
