@@ -651,11 +651,32 @@ class MHDPARelationNetwork(nn.Module) :
             self.nonLinearModule = nn.ReLU 
 
         # F function :
+        """
+        self.finalParallelLayer = nn.Sequential( nn.Linear(self.nbrModule*self.interactions_dim,self.depth_dim+2+self.qst_dim,bias=self.use_bias)                                              
+                                                )
+        """
+        """
         self.finalParallelLayer = nn.Sequential( nn.Linear(self.nbrModule*self.interactions_dim,self.units_per_MLP_layer,bias=self.use_bias),
                                         self.nonLinearModule(),
                                         nn.Linear(self.units_per_MLP_layer,self.depth_dim+2+self.qst_dim,bias=self.use_bias)                                              
                                                 )
-        
+        """
+        self.finalParallelLayer = nn.Sequential( nn.Linear(self.nbrModule*self.interactions_dim,self.units_per_MLP_layer,bias=self.use_bias),
+                                        self.nonLinearModule(),
+                                        nn.Linear(self.units_per_MLP_layer,self.units_per_MLP_layer,bias=self.use_bias),
+                                        self.nonLinearModule(),
+                                        nn.Linear(self.units_per_MLP_layer,self.depth_dim+2+self.qst_dim,bias=self.use_bias)                                              
+                                                )
+        """
+        self.finalParallelLayer = nn.Sequential( nn.Linear(self.nbrModule*self.interactions_dim,self.units_per_MLP_layer,bias=self.use_bias),
+                                        self.nonLinearModule(),
+                                        nn.Linear(self.units_per_MLP_layer,self.units_per_MLP_layer,bias=self.use_bias),
+                                        self.nonLinearModule(),
+                                        nn.Linear(self.units_per_MLP_layer,self.units_per_MLP_layer,bias=self.use_bias),
+                                        self.nonLinearModule(),
+                                        nn.Linear(self.units_per_MLP_layer,self.depth_dim+2+self.qst_dim,bias=self.use_bias)                                              
+                                                )
+        """
         # Layer Normalization at the spatial level :
         self.AttentionalBlockFinalLayer = nn.LayerNorm(int(self.spatialDim*self.spatialDim) )
         
@@ -766,6 +787,9 @@ class MHDPARelationNetwork(nn.Module) :
 class MHDPA_RN(BasicModel):
     def __init__(self, args):
         path = 'MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
+        #path = '1MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
+        #path = '2MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
+        #path = 'ResidualMHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
         if args.withMaxPool :
             path += '+MaxPool'
         if args.withSSM :

@@ -67,7 +67,10 @@ elif args.model=='RN2' :
 else :
   model = MHDPA_RN(args)
 
-model_dirs = './model'
+#model_dirs = './model_SimpleMHOutput'
+#model_dirs = './model_2LMHOutput'
+model_dirs = './model_3LMHOutput'
+#model_dirs = './model_4LMHOutput'
 bs = args.batch_size
 input_img = torch.FloatTensor(bs, 3, 75, 75)
 input_qst = torch.FloatTensor(bs, 11)
@@ -167,7 +170,7 @@ def test(epoch, rel, norel):
     
 def load_data():
     print('loading data...')
-    dirs = '../DATASTETS'
+    dirs = '../DATASETS'
     filename = os.path.join(dirs,'sort-of-clevr.pickle')
     with open(filename, 'rb') as f:
       train_datasets, test_datasets = pickle.load(f)
