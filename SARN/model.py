@@ -38,7 +38,43 @@ class ConvInputModel(nn.Module):
         x = self.batchNorm4(x)
         return x
 
-  
+
+class ModularityPrioredConvInputModel(nn.Module):
+    def __init__(self, depth_dim=24):
+        super(ModularityPrioredConvInputModel, self).__init__()
+        
+        self.conv1 = nn.Conv2d(3, depth_dim, 3, stride=2, padding=1)
+        self.batchNorm1 = nn.BatchNorm2d(depth_dim)
+        self.conv2 = nn.Conv2d(depth_dim, depth_dim, 3, stride=2, padding=1)
+        self.batchNorm2 = nn.BatchNorm2d(depth_dim)
+        self.conv3 = nn.Conv2d(depth_dim, depth_dim, 3, stride=2, padding=1)
+        self.batchNorm3 = nn.BatchNorm2d(depth_dim)
+        self.conv4 = nn.Conv2d(depth_dim, depth_dim, 3, stride=2, padding=1)
+        self.batchNorm4 = nn.BatchNorm2d(depth_dim)
+
+        
+    def forward(self, img):
+        """convolution"""
+        x = self.conv1(img)
+        x = F.relu(x)
+        #x = F.softmax(x, dim=1)
+        x = self.batchNorm1(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        #x = F.softmax(x, dim=1)
+        x = self.batchNorm2(x)
+        x = self.conv3(x)
+        x = F.relu(x)
+        #x = F.softmax(x, dim=1)
+        x = self.batchNorm3(x)
+        x = self.conv4(x)
+        x = F.relu(x)
+        x_weights = F.softmax(x, dim=1).detach()
+        x = x*x_weights
+        x = self.batchNorm4(x)
+        return x
+
+
 class FCOutputModel(nn.Module):
     def __init__(self):
         super(FCOutputModel, self).__init__()
@@ -1165,12 +1201,16 @@ class ParallelSequentialAttentionRelationModule(nn.Module) :
 
         return foutput
 
+
+
 class SARN(BasicModel):
     def __init__(self, args):
         
         path = 'SequentialAttentionRN'
         if args.nbrParallelAttention > 1 :
             path = 'P{}SARN'.format(args.nbrParallelAttention)
+        if args.withModularityPrior:
+            path = 'ModularityPriored'+path
         if args.NoXavierInit :
             path += '+NoXavierInit'
         if not(args.withLNGenerator) :
@@ -1187,7 +1227,10 @@ class SARN(BasicModel):
 
         super(SARN, self).__init__(args, path)
         
-        self.conv = ConvInputModel(depth_dim=args.conv_dim)
+        if args.withModularityPrior:
+            self.conv = ModularityPrioredConvInputModel(depth_dim=args.conv_dim)
+        else :
+            self.conv = ConvInputModel(depth_dim=args.conv_dim)
         
         ##(number of filters per object+2 depth for the coordinates of object)*2+question vector
         #self.relationModule = SequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )

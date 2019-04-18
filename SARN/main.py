@@ -48,6 +48,7 @@ parser.add_argument('--withLeakyReLU',action='store_true',default=False)
 parser.add_argument('--withLNGenerator',action='store_true',default=False)
 parser.add_argument('--NoXavierInit',action='store_true',default=False)
 parser.add_argument('--withSoftmaxWeights',action='store_true',default=False)
+parser.add_argument('--withModularityPrior',action='store_true',default=False)
 parser.add_argument('--interactions_dim', type=int, default=0,
                     help='dimension of the entities interaction (default set to 0 --> 4*output_dim)')
 parser.add_argument('--units_per_MLP_layer', type=int, default=0,
@@ -236,4 +237,4 @@ if args.resume:
 for epoch in range(1, args.epochs + 1):
     train(epoch, rel_train, norel_train)
     test(epoch, rel_test, norel_test)
-    model.save_model(epoch)
+model.save_model(epoch)
