@@ -18,7 +18,7 @@ Download and unpack the [CLEVR dataset](http://cs.stanford.edu/people/jcjohns/cl
 
 ```bash
 mkdir DATASETS
-wget https://s3-us-west-1.amazonaws.com/clevr/CLEVR_v1.0.zip -O DATASETS/CLEVR_v1.0.zip
+wget https://dl.fbaipublicfiles.com/clevr/CLEVR_v1.0.zip -O DATASETS/CLEVR_v1.0.zip
 unzip DATASETS/CLEVR_v1.0.zip -d DATASETS
 ```
 
@@ -28,17 +28,17 @@ Preprocess the questions for the CLEVR train, val, and test sets with the follow
 
 ```bash
 python scripts/preprocess_questions.py \
-  --input_questions_json DATASETS/CLEVR_v1.0/questions/CLEVR_train_questions.json \
+  --input_data_json DATASETS/CLEVR_v1.0/questions/CLEVR_train_questions.json \
   --output_h5_file DATASETS/CLEVR_v1.0/train_questions.h5 \
   --output_vocab_json DATASETS/CLEVR_v1.0/vocab.json
 
 python scripts/preprocess_questions.py \
-  --input_questions_json DATASETS/CLEVR_v1.0/questions/CLEVR_val_questions.json \
+  --input_data_json DATASETS/CLEVR_v1.0/questions/CLEVR_val_questions.json \
   --output_h5_file DATASETS/CLEVR_v1.0/val_questions.h5 \
   --input_vocab_json DATASETS/CLEVR_v1.0/vocab.json
   
 python scripts/preprocess_questions.py \
-  --input_questions_json DATASETS/CLEVR_v1.0/questions/CLEVR_test_questions.json \
+  --input_data_json DATASETS/CLEVR_v1.0/questions/CLEVR_test_questions.json \
   --output_h5_file DATASETS/CLEVR_v1.0/test_questions.h5 \
   --input_vocab_json DATASETS/CLEVR_v1.0/vocab.json
 ```
@@ -51,4 +51,4 @@ and then reused (not expanded) to process the validation and test sets.
 ## Disclaimers
 
 With regards to the benchmarking on [CLEVR dataset](http://cs.stanford.edu/people/jcjohns/clevr/), 
-many of the scripts are directly taken (and sometimes re-adapted) from the dedicated [GitHub repo](https://github.com/facebookresearch/clevr-iep).
+the scripts are heavily inspired on the ones in the dedicated [repo](https://github.com/facebookresearch/clevr-iep).
