@@ -1,3 +1,9 @@
+# Copyright 2019-present, Kevin Yandoka Denamganai
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -157,9 +163,11 @@ def main(args):
     question_family_idxs = []
     orig_idxs = []
     image_idxs = []
+    image_paths = []
     for orig_idx, q in enumerate(answers_questions):
         orig_idxs.append(orig_idx)
         image_idxs.append(q['image_index'])
+        image_paths.append( os.path.join( 'images', q['split'], q['image_filename']) )
         if 'question_family_index' in q: question_family_idxs.append(q['question_family_index'])
         
         question = q['question']
@@ -198,6 +206,7 @@ def main(args):
     encoded_answers = np.asarray(encoded_answers, dtype=np.int32)
     question_family_idxs = np.asarray(question_family_idxs, dtype=np.int32)
     image_idxs = np.asarray(image_idxs, dtype=np.int32)
+    image_paths = np.asarray(image_paths, dtype=str)
     orig_idxs = np.asarray(orig_idxs, dtype=np.int32)
     with h5py.File(args.output_h5_file, 'w') as f:
         f.create_dataset('questions', data=encoded_questions)
@@ -205,6 +214,7 @@ def main(args):
         f.create_dataset('question_families', data=question_family_idxs)
         f.create_dataset('image_idxs', data=image_idxs)
         f.create_dataset('orig_idxs', data=orig_idxs)
+    np.savez(args.output_h5_file+'.paths', paths=image_paths)
     print('DONE.')
 
 if __name__ == '__main__':

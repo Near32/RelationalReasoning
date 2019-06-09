@@ -53,13 +53,58 @@ class FCOutputModel(nn.Module):
         x = self.fc3(x)
         return F.log_softmax(x)
 
-  
+
+class EncoderRNN(nn.Module):
+    def __init__(self, vocab_size, embedding_size=256, hidden_size=256, nbr_layers=1, dropout=0, use_cuda=False):
+        super(EncoderRNN, self).__init__()
+        self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
+        self.hidden_size = hidden_size
+        self.nbr_layers = nbr_layers
+        self.dropout = dropout
+        self.batch_first = True
+        self.use_cuda = use_cuda
+
+        self.embedding = nn.Embedding(self.vocab_size, self.embedding_size)
+        self.LSTM = nn.LSTM(input_size=self.embedding_size,
+                            hidden_size=self.hidden_size,
+                            num_layers=self.nbr_layers,
+                            batch_first=self.batch_first,
+                            dropout=self.dropout,
+                            bidirectional=True)
+
+        if self.use_cuda:
+            self = self.cuda()
+
+    def forward(self, input_seq, input_lengths, init_hidden_state=None):
+        # Embedding from word indices to vectors:
+        embedded_seq = self.embedding(input_seq)
+        # Pack padded batch of sequences:
+        packed = nn.utils.rnn.pack_padded_sequence(embedded_seq, input_lengths, batch_first=self.batch_first)
+        # Forward pass:
+        outputs, hidden = self.LSTM(packed, init_hidden_state)
+        # Unpack:
+        outputs, _ = nn.utils.rnn.pad_packed_sequence(outputs)
+        # Sum bidirectional outputs: additive approach to the fusion of modalities:
+        outputs = outputs[:, :, :self.hidden_size] + outputs[:, : ,self.hidden_size:]
+        return outputs[-1] 
 
 class BasicModel(nn.Module):
-    def __init__(self, args, name):
+    def __init__(self, kwargs, name):
         super(BasicModel, self).__init__()
         self.name=name
         self.dirpath = './model'
+
+        # CLEVR:
+        if 'vocab_size' in kwargs and kwargs['vocab_size'] != 0 \
+        and kwargs['embedding_size'] != 0 \
+        and kwargs['hidden_size'] != 0:
+            self.vocab_size = kwargs['vocab_size']
+            self.encoder = EncoderRNN(vocab_size=kwargs['vocab_size'], 
+                                    embedding_size=kwargs['embedding_size'], 
+                                    hidden_size=kwargs['hidden_size'],
+                                    nbr_layers=kwargs['nbr_RNN_layers'],
+                                    use_cuda=kwargs['cuda'])        
 
     def train_(self, input_img, input_qst, label):
         self.optimizer.zero_grad()
@@ -72,6 +117,17 @@ class BasicModel(nn.Module):
         accuracy = correct * 100. / len(label)
         return accuracy
         
+    def train_clevr(self, input_img, input_qst, qst_lengths, answer, training=True):
+        self.optimizer.zero_grad()
+        encoded_qst = self.encoder(input_seq=input_qst, input_lengths=qst_lengths)
+        output = self(input_img, encoded_qst)
+        if training:
+            loss = F.nll_loss(output, answer)
+            loss.backward()
+            self.optimizer.step()
+        pred = output.data.max(1)[1]
+        return pred, output
+    
     def test_(self, input_img, input_qst, label):
         output = self(input_img, input_qst)
         pred = output.data.max(1)[1]
@@ -84,8 +140,8 @@ class BasicModel(nn.Module):
 
 
 class RN(BasicModel):
-    def __init__(self, args):
-        super(RN, self).__init__(args, 'RN')
+    def __init__(self, kwargs):
+        super(RN, self).__init__(kwargs, 'RN')
         
         self.conv = ConvInputModel()
         
@@ -98,9 +154,9 @@ class RN(BasicModel):
 
         self.f_fc1 = nn.Linear(256, 256)
 
-        self.coord_oi = torch.FloatTensor(args.batch_size, 2)
-        self.coord_oj = torch.FloatTensor(args.batch_size, 2)
-        if args.cuda:
+        self.coord_oi = torch.FloatTensor(kwargs['batch_size'], 2)
+        self.coord_oj = torch.FloatTensor(kwargs['batch_size'], 2)
+        if kwargs['cuda']:
             self.coord_oi = self.coord_oi.cuda()
             self.coord_oj = self.coord_oj.cuda()
         self.coord_oi = Variable(self.coord_oi)
@@ -110,11 +166,11 @@ class RN(BasicModel):
         def cvt_coord(i):
             return [(i/5-2)/2., (i%5-2)/2.]
         
-        self.coord_tensor = torch.FloatTensor(args.batch_size, 25, 2)
-        if args.cuda:
+        self.coord_tensor = torch.FloatTensor(kwargs['batch_size'], 25, 2)
+        if kwargs['cuda']:
             self.coord_tensor = self.coord_tensor.cuda()
         self.coord_tensor = Variable(self.coord_tensor)
-        np_coord_tensor = np.zeros((args.batch_size, 25, 2))
+        np_coord_tensor = np.zeros((kwargs['batch_size'], 25, 2))
         for i in range(25):
             np_coord_tensor[:,i,:] = np.array( cvt_coord(i) )
         self.coord_tensor.data.copy_(torch.from_numpy(np_coord_tensor))
@@ -123,7 +179,7 @@ class RN(BasicModel):
 
         self.fcout = FCOutputModel()
         
-        self.optimizer = optim.Adam(self.parameters(), lr=args.lr)
+        self.optimizer = optim.Adam(self.parameters(), lr=kwargs['lr'])
 
 
     def forward(self, img, qst):
@@ -342,19 +398,19 @@ class RelationModule(nn.Module) :
 class RN2(BasicModel):
     def __init__(self, args):
         path = 'RN2'
-        if args.NoLayerNormalization :
+        if kwargs['NoLayerNormalization'] :
             path += '+NoLN'
-        super(RN2, self).__init__(args, path)
+        super(RN2, self).__init__(kwargs, path)
         
         self.conv = ConvInputModel()
         
         ##(number of filters per object+2 depth for the coordinates of object)*2+question vector
-        self.relationModule = RelationModule(output_dim=10,depth_dim=(24+2),qst_dim=11,use_cuda=True,linearNormalization=not(args.NoLayerNormalization) )
+        self.relationModule = RelationModule(output_dim=10,depth_dim=(24+2),qst_dim=11,use_cuda=True,linearNormalization=not(kwargs['NoLayerNormalization']) )
         
         #for name,p in self.named_parameters() :
         #   print(name)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=args.lr)
+        self.optimizer = optim.Adam(self.parameters(), lr=kwargs['lr'])
 
 
     def forward(self, img, qst):
@@ -554,7 +610,6 @@ class MHDPARelationModule(nn.Module) :
 
         augx_full_flat = xb.view( batchsize*featuresize, -1) 
         # ( batch*featuresize x depth )
-
         queryb = self.queryGenerator( augx_full_flat )
         keyb = self.keyGenerator( augx_full_flat )
         valueb = self.valueGenerator( augx_full_flat )
@@ -613,12 +668,12 @@ class MHDPARelationModule(nn.Module) :
 
 
 class MHDPARelationNetwork(nn.Module) :
-    def __init__(self,output_dim=32,depth_dim=24,qst_dim=11, nbrModule=3,nbrRecurrentSharedLayers=1,use_cuda=True,spatialDim=7,withMaxPool=False, withLNGenerator=False,args=None) :
+    def __init__(self,output_dim=32,depth_dim=24,qst_dim=11, nbrModule=3,nbrRecurrentSharedLayers=1,use_cuda=True,spatialDim=7,withMaxPool=False, withLNGenerator=False,kwargs=None) :
         super(MHDPARelationNetwork,self).__init__()
 
         self.withMaxPool = withMaxPool
         self.withLNGenerator = withLNGenerator
-        self.args = args 
+        self.kwargs = kwargs 
 
         self.use_cuda = use_cuda
         self.spatialDim = spatialDim
@@ -629,9 +684,9 @@ class MHDPARelationNetwork(nn.Module) :
         self.nbrModule = nbrModule
         self.nbrRecurrentSharedLayers = nbrRecurrentSharedLayers
         self.units_per_MLP_layer = self.output_dim*8#384
-        if args.units_per_MLP_layer != 0:
-            self.units_per_MLP_layer = args.units_per_MLP_layer 
-        self.interactions_dim = args.interactions_dim 
+        if kwargs['units_per_MLP_layer'] != 0:
+            self.units_per_MLP_layer = kwargs['units_per_MLP_layer'] 
+        self.interactions_dim = kwargs['interactions_dim'] 
         if self.interactions_dim==0 :
             self.interactions_dim = self.output_dim*4#32
         self.trans = None 
@@ -647,7 +702,7 @@ class MHDPARelationNetwork(nn.Module) :
                 use_cuda=self.use_cuda) )
 
         self.nonLinearModule = nn.LeakyReLU
-        if self.args.withReLU :
+        if self.kwargs['withReLU'] :
             self.nonLinearModule = nn.ReLU 
 
         # F function :
@@ -773,8 +828,8 @@ class MHDPARelationNetwork(nn.Module) :
         if not(self.withMaxPool) :
             intermediateOutput = intermediateOutput.view( (self.batchsize, -1) )    
 
-        if self.args.dropout_prob != 0.0 :
-            intermediateOutput = F.dropout(intermediateOutput, p=self.args.dropout_prob)
+        if self.kwargs['dropout_prob'] != 0.0 :
+            intermediateOutput = F.dropout(intermediateOutput, p=self.kwargs['dropout_prob'])
 
         foutput = self.finalLayer(intermediateOutput)
 
@@ -785,48 +840,56 @@ class MHDPARelationNetwork(nn.Module) :
 
 
 class MHDPA_RN(BasicModel):
-    def __init__(self, args):
-        path = 'MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
+    def __init__(self, kwargs):
+        path = 'MHDPA{}-RN{}'.format(kwargs['nbrModule'], kwargs['nbrRecurrentSharedLayers'])
         #path = '1MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
         #path = '2MHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
         #path = 'ResidualMHDPA{}-RN{}'.format(args.nbrModule,args.nbrRecurrentSharedLayers)
-        if args.withMaxPool :
+        if kwargs['withMaxPool']:
             path += '+MaxPool'
-        if args.withSSM :
+        if kwargs['withSSM']:
             path += '+SSM'
-        if args.withLNGenerator :
+        if kwargs['withLNGenerator'] :
             path += '+LNGen'
-        if args.withReLU :
+        if kwargs['withReLU'] :
             path += '+ReLU'
-        if args.interactions_dim!=0:
-            path += '+InterDim{}'.format(args.interactions_dim)
-        if args.units_per_MLP_layer!=0:
-            path += '+MLP{}'.format(args.units_per_MLP_layer)
-        if args.dropout_prob!=0.0 :
-            path += '+DropOut{}'.format(args.dropout_prob)
+        if kwargs['interactions_dim']!=0:
+            path += '+InterDim{}'.format(kwargs['interactions_dim'])
+        if kwargs['units_per_MLP_layer']!=0:
+            path += '+MLP{}'.format(kwargs['units_per_MLP_layer'])
+        if kwargs['dropout_prob']!=0.0 :
+            path += '+DropOut{}'.format(kwargs['dropout_prob'])
 
-        super(MHDPA_RN, self).__init__(args, path)
+        super(MHDPA_RN, self).__init__(kwargs, path)
         
-        self.args = args
+        self.kwargs = kwargs
         self.conv = ConvInputModel()
         
         ##(number of filters per object+2 depth for the coordinates of object)*2+question vector
-        self.relationModule = MHDPARelationNetwork(output_dim=10,
-                depth_dim=24,
-                qst_dim=11,
-                nbrModule=args.nbrModule, 
-                nbrRecurrentSharedLayers=args.nbrRecurrentSharedLayers, 
-                spatialDim=5, 
-                use_cuda=True,
-                withMaxPool=args.withMaxPool, 
-                withLNGenerator=args.withLNGenerator, 
-                args=args 
-                )
+        qst_dim = 11
+        spatialDim = 5
+        output_dim = 10
+        if 'vocab_size' in kwargs:
+            qst_dim = kwargs['hidden_size']
+            spatialDim = 6
+            output_dim = kwargs['answer_vocab_size']
+
+        self.relationModule = MHDPARelationNetwork(output_dim=output_dim,
+                                                    depth_dim=24,
+                                                    qst_dim=qst_dim,
+                                                    nbrModule=kwargs['nbrModule'], 
+                                                    nbrRecurrentSharedLayers=kwargs['nbrRecurrentSharedLayers'], 
+                                                    spatialDim=spatialDim, 
+                                                    use_cuda=True,
+                                                    withMaxPool=kwargs['withMaxPool'], 
+                                                    withLNGenerator=kwargs['withLNGenerator'], 
+                                                    kwargs=kwargs 
+                                                    )
         
         for name,p in self.named_parameters() :
             print(name)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=args.lr)
+        self.optimizer = optim.Adam(self.parameters(), lr=kwargs['lr'])
 
 
     def forward(self, img, qst):
@@ -839,7 +902,7 @@ class MHDPA_RN(BasicModel):
         dsize = xsize[2]
         featuresize = dsize*dsize
 
-        if self.args.withSSM :
+        if self.kwargs['withSSM'] :
             x = x.view(batchsize,depthsize,featuresize)
             x = F.softmax(x,dim=2)
             x = x.view(batchsize,depthsize,dsize,dsize)
@@ -855,14 +918,14 @@ class MHDPA_RN(BasicModel):
 
 
 class CNN_MLP(BasicModel):
-    def __init__(self, args):
-        super(CNN_MLP, self).__init__(args, 'CNNMLP')
+    def __init__(self, kwargs):
+        super(CNN_MLP, self).__init__(kwargs, 'CNNMLP')
 
         self.conv  = ConvInputModel()
         self.fc1   = nn.Linear(5*5*24 + 11, 256)  # question concatenated to all
         self.fcout = FCOutputModel()
 
-        self.optimizer = optim.Adam(self.parameters(), lr=args.lr)
+        self.optimizer = optim.Adam(self.parameters(), lr=kwargs['lr'])
         #print([ a for a in self.parameters() ] )
   
     def forward(self, img, qst):

@@ -53,19 +53,20 @@ parser.add_argument('--dropout_prob', type=float, default=0.0,
     
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
+kwargs = dict(args._get_kwargs())
 
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 if args.model=='CNN_MLP': 
-  model = CNN_MLP(args)
+  model = CNN_MLP(kwargs)
 elif args.model=='RN':
-    model = RN(args)
+    model = RN(kwargs)
 elif args.model=='RN2' :
-  model = RN2(args)
+  model = RN2(kwargs)
 else :
-  model = MHDPA_RN(args)
+  model = MHDPA_RN(kwargs)
 
 #model_dirs = './model_SimpleMHOutput'
 #model_dirs = './model_2LMHOutput'
@@ -77,7 +78,7 @@ input_qst = torch.FloatTensor(bs, 11)
 label = torch.LongTensor(bs)
 
 ld = os.path.join(model_dirs,model.name)
-writer = SummaryWriter(log_dir=ld)
+writer = SummaryWriter(logdir=ld)
 
 if args.cuda:
     model.cuda()
