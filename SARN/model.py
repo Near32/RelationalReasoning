@@ -12,7 +12,7 @@ class ConvInputModel(nn.Module):
     def __init__(self, depth_dim=24):
         super(ConvInputModel, self).__init__()
         
-        self.conv1 = nn.Conv2d(3, depth_dim, 3, stride=2, padding=1)
+        self.conv1 = nn.Conv2d(3, depth_dim, 3, stride=1, padding=1)
         self.batchNorm1 = nn.BatchNorm2d(depth_dim)
         self.conv2 = nn.Conv2d(depth_dim, depth_dim, 3, stride=2, padding=1)
         self.batchNorm2 = nn.BatchNorm2d(depth_dim)
@@ -1203,23 +1203,493 @@ class ParallelSequentialAttentionRelationModule(nn.Module) :
 
 
 
+class MultiReferenceSequentialAttentionRelationModule(nn.Module) :
+    def __init__(self, qst_dim=10,output_dim=32,depth_dim=24,use_cuda=True, args=None) :
+        super(MultiReferenceSequentialAttentionRelationModule,self).__init__()
+
+        self.use_cuda = use_cuda
+        self.output_dim = output_dim
+        self.depth_dim = depth_dim
+        self.qst_dim = qst_dim
+        self.nbrReference = args.nbrParallelAttention
+        self.args = args
+        self.linearNormalization = self.args.withLNGenerator
+
+        self.nonlinearity = nn.ReLU()
+        if args.withLeakyReLU :
+            self.nonlinearity = nn.LeakyReLU()
+
+        self.apsi = nn.Sequential( 
+                    nn.Linear(self.depth_dim+self.qst_dim,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.nbrReference)
+                    )
+
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.apsi[0].weight)
+            torch.nn.init.xavier_normal_(self.apsi[3].weight)
+            torch.nn.init.xavier_normal_(self.apsi[6].weight)    
+        
+        self.g1 = nn.Linear((self.nbrReference+1)*(self.depth_dim+self.qst_dim),self.args.units_per_MLP_layer)
+        self.gln1 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        self.g2 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.gln2 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        self.g3 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.gln3 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.g1.weight)
+            torch.nn.init.xavier_normal_(self.g2.weight)
+            torch.nn.init.xavier_normal_(self.g3.weight)
+                
+        self.f1 = nn.Linear(self.args.units_per_MLP_layer, self.args.units_per_MLP_layer)
+        self.f2 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.f3 = nn.Linear(self.args.units_per_MLP_layer, self.output_dim)
+        
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.f1.weight)
+            torch.nn.init.xavier_normal_(self.f2.weight)
+            torch.nn.init.xavier_normal_(self.f3.weight)
+            
+        self.fXY = None 
+        self.batch = 0
+
+        if self.use_cuda :
+            self = self.cuda()
+
+    def addXYfeatures(self,x) :
+        batch = x.size(0)
+        if self.fXY is None or batch != self.batch :
+            xsize = x.size()
+            # batch x depth x X x Y
+            self.batch = xsize[0]
+            self.depth = xsize[1]
+            self.sizeX = xsize[2]
+            self.sizeY = xsize[3]
+            stepX = 2.0/self.sizeX
+            stepY = 2.0/self.sizeY
+
+            #fx = -1*torch.ones((batch,1,sizeX,1),dtype=torch.float)
+            fx = torch.zeros((self.batch,1,self.sizeX,1))
+            #fy = -1*torch.ones((batch,1,1,sizeY),dtype=torch.float)
+            fy = torch.zeros((self.batch,1,1,self.sizeY))
+            for i in range(self.sizeX) :
+                #fx[:,:,i,:] = (i+0.5)*stepX/2.
+                fx[:,:,i,:] = -1+(i+0.5)*stepX
+            
+            for i in range(self.sizeY) :
+                #fy[:,:,:,i] = (i+0.5)*stepY/2.
+                fy[:,:,:,i] = -1+(i+0.5)*stepY
+            
+            fxy = fx.repeat(1,1,1,self.sizeY)#torch.cat( [fx]*self.sizeY, dim=3)
+            fyx = fy.repeat(1,1,self.sizeX,1)#torch.cat( [fy]*self.sizeX, dim=2)
+            fXY = torch.cat( [fxy,fyx], dim=1)
+            self.fXY = Variable(fXY)
+            
+            print(self.fXY[0])
+            if self.use_cuda : self.fXY = self.fXY.cuda()
+        
+        out = torch.cat( [x,self.fXY], dim=1)
+
+        #out = out.view((self.batch,self.depth+2,-1))
+
+        return out 
+
+    def applyAPsi(self,oinput) :
+        aout = self.apsi(oinput)
+        return aout 
+
+    def applyG(self,oinput) :
+        gout = self.nonlinearity( self.g1(oinput) )
+        gout = self.gln1(gout)
+        gout = self.nonlinearity( self.g2(gout) )
+        gout = self.gln2(gout)
+        gout = self.nonlinearity( self.g3(gout) )
+        gout = self.gln3(gout)
+        
+        return gout 
+
+    def applyGNoLN(self,oinput) :
+        gout = self.nonlinearity( self.g1(oinput) )
+        gout = self.nonlinearity( self.g2(gout) )
+        gout = self.nonlinearity( self.g3(gout) )
+        
+        return gout 
+
+    def applyF(self,x) :
+        fout = self.nonlinearity( self.f1(x) )
+        fout = self.nonlinearity( F.dropout( self.f2(fout), p=0.5) )
+        fout = self.nonlinearity(fout)
+
+        return fout
+
+    def forward(self,ojqst, batchsize=32,featuresize=25) :
+        #(batch*feature x depth+qstsize)
+        weights = self.applyAPsi(ojqst).view((batchsize,featuresize,-1))
+        #(batch x feature x nbrReference)
+        softmax_weights = F.softmax( weights, dim=1).unsqueeze(3)
+        #(batch x feature x nbrReference x 1)
+        
+        repeated_ojqst = ojqst.view(batchsize,featuresize,-1)
+        #(batchsize x feature x depth+qstsize)
+        repeated_ojqst = repeated_ojqst.unsqueeze(2)
+        #(batchsize x feature x 1 x depth+qstsize)
+        repeated_ojqst = repeated_ojqst.repeat(1,1,self.nbrReference,1)
+        #(batchsize x feature x nbrReference x depth+qstsize)
+        if self.args.withSoftmaxWeights :
+            ois = torch.sum( softmax_weights * repeated_ojqst, dim=1).squeeze()
+        else :
+            ois = torch.sum( weights * repeated_ojqst, dim=1).squeeze()
+        #(batch x nbrReference x depth+qstsize )
+        
+        ois = ois.view( batchsize, -1).unsqueeze(1)
+        #(batch x 1 x nbrReference*(depth+qstsize) )
+
+        ois = ois.repeat(1,featuresize,1)
+        #(batch x feature x nbrReference*(depth+qstsize) )
+        
+        oj = ojqst.view(batchsize,featuresize,-1)
+        #(batch x feature x depth+qstsize )
+        
+        x = torch.cat( [ois,oj],dim=2)
+        #(batch x feature x (nbrReference+1)*(depth+qstsize) )
+        
+        x = x.view( batchsize*featuresize, -1)
+        #(batch*feature x (nbrReference+1)*(depth+qstsize) )
+        
+        if self.linearNormalization :
+            gout = self.applyG(x)
+        else :
+            gout = self.applyGNoLN(x)
+
+        x_g = gout.view(batchsize,featuresize,-1)
+        #(batch x feature x args.units_per_MLP_layer )
+        
+        sumgout = x_g.sum(1).squeeze()
+        #(batch x args.units_per_MLP_layer )
+        
+        foutput = self.applyF(sumgout)
+
+        return foutput
+
+
+
+class RecurrentMultiReferenceSequentialAttentionRelationModule(nn.Module) :
+    def __init__(self, qst_dim=10,output_dim=32,hidden_state_dim=256,depth_dim=24,use_cuda=True, args=None) :
+        super(RecurrentMultiReferenceSequentialAttentionRelationModule,self).__init__()
+
+        self.args = args
+        self.use_cuda = use_cuda
+        self.output_dim = output_dim
+        self.depth_dim = depth_dim
+        self.qst_dim = qst_dim
+        self.nbrReference = args.nbrParallelAttention
+        self.nbrRecurrentSteps = args.nbrRecurrentSharedLayers
+        self.hidden_state_dim = hidden_state_dim
+        self.initial_hidden_state = torch.zeros(self.args.batch_size,self.hidden_state_dim)
+        if self.use_cuda:
+            self.initial_hidden_state = self.initial_hidden_state.cuda()
+
+        self.linearNormalization = self.args.withLNGenerator
+
+        self.nonlinearity = nn.ReLU()
+        if args.withLeakyReLU :
+            self.nonlinearity = nn.LeakyReLU()
+
+        self.apsi = nn.Sequential( 
+                    nn.Linear(self.depth_dim+self.qst_dim+self.hidden_state_dim,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.nbrReference)
+                    )
+
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.apsi[0].weight)
+            torch.nn.init.xavier_normal_(self.apsi[3].weight)
+            torch.nn.init.xavier_normal_(self.apsi[6].weight)    
+        
+        self.g1 = nn.Linear((self.nbrReference+1)*(self.depth_dim+self.qst_dim+self.hidden_state_dim),self.args.units_per_MLP_layer)
+        self.gln1 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        self.g2 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.gln2 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        self.g3 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.gln3 = nn.LayerNorm(self.args.units_per_MLP_layer)
+        
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.g1.weight)
+            torch.nn.init.xavier_normal_(self.g2.weight)
+            torch.nn.init.xavier_normal_(self.g3.weight)
+        
+        self.recurrentHiddenLayer = nn.Sequential( 
+                    nn.Linear(self.args.units_per_MLP_layer+self.hidden_state_dim,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer),
+                    nn.LayerNorm(self.args.units_per_MLP_layer),
+                    self.nonlinearity,
+                    nn.Linear(self.args.units_per_MLP_layer,self.hidden_state_dim)
+                    )
+
+        self.f1 = nn.Linear(self.args.units_per_MLP_layer+self.hidden_state_dim, self.args.units_per_MLP_layer)
+        self.f2 = nn.Linear(self.args.units_per_MLP_layer,self.args.units_per_MLP_layer)
+        self.f3 = nn.Linear(self.args.units_per_MLP_layer, self.output_dim)
+        
+        if not(self.args.NoXavierInit) :
+            torch.nn.init.xavier_normal_(self.f1.weight)
+            torch.nn.init.xavier_normal_(self.f2.weight)
+            torch.nn.init.xavier_normal_(self.f3.weight)
+            
+        self.fXY = None 
+        self.batch = 0
+
+        if self.use_cuda :
+            self = self.cuda()
+
+    def addXYfeatures(self,x) :
+        batch = x.size(0)
+        if self.fXY is None or batch != self.batch :
+            xsize = x.size()
+            # batch x depth x X x Y
+            self.batch = xsize[0]
+            self.depth = xsize[1]
+            self.sizeX = xsize[2]
+            self.sizeY = xsize[3]
+            stepX = 2.0/self.sizeX
+            stepY = 2.0/self.sizeY
+
+            #fx = -1*torch.ones((batch,1,sizeX,1),dtype=torch.float)
+            fx = torch.zeros((self.batch,1,self.sizeX,1))
+            #fy = -1*torch.ones((batch,1,1,sizeY),dtype=torch.float)
+            fy = torch.zeros((self.batch,1,1,self.sizeY))
+            for i in range(self.sizeX) :
+                #fx[:,:,i,:] = (i+0.5)*stepX/2.
+                fx[:,:,i,:] = -1+(i+0.5)*stepX
+            
+            for i in range(self.sizeY) :
+                #fy[:,:,:,i] = (i+0.5)*stepY/2.
+                fy[:,:,:,i] = -1+(i+0.5)*stepY
+            
+            fxy = fx.repeat(1,1,1,self.sizeY)#torch.cat( [fx]*self.sizeY, dim=3)
+            fyx = fy.repeat(1,1,self.sizeX,1)#torch.cat( [fy]*self.sizeX, dim=2)
+            fXY = torch.cat( [fxy,fyx], dim=1)
+            self.fXY = Variable(fXY)
+            
+            print(self.fXY[0])
+            if self.use_cuda : self.fXY = self.fXY.cuda()
+        
+        out = torch.cat( [x,self.fXY], dim=1)
+
+        #out = out.view((self.batch,self.depth+2,-1))
+
+        return out 
+
+    def applyAPsi(self,oinput) :
+        aout = self.apsi(oinput)
+        return aout 
+
+    def applyG(self,oinput) :
+        gout = self.nonlinearity( self.g1(oinput) )
+        gout = self.gln1(gout)
+        gout = self.nonlinearity( self.g2(gout) )
+        gout = self.gln2(gout)
+        gout = self.nonlinearity( self.g3(gout) )
+        gout = self.gln3(gout)
+        
+        return gout 
+
+    def applyGNoLN(self,oinput) :
+        gout = self.nonlinearity( self.g1(oinput) )
+        gout = self.nonlinearity( self.g2(gout) )
+        gout = self.nonlinearity( self.g3(gout) )
+        
+        return gout 
+
+    def applyF(self,x) :
+        fout = self.nonlinearity( self.f1(x) )
+        fout = self.nonlinearity( F.dropout( self.f2(fout), p=0.5) )
+        fout = self.nonlinearity(fout)
+
+        return fout
+
+    def forward(self,ojqst, batchsize=32,featuresize=25) :
+        #(batch*feature x depth+qstsize)
+        
+        init_ojqst = ojqst 
+        hidden_state = self.initial_hidden_state
+        #(batch x hidden_state_dim)
+        for i in range(self.nbrRecurrentSteps) :
+            repeated_hidden_state = hidden_state.repeat(featuresize, 1)
+            #(batch*feature x hidden_state_dim)
+            ojqst = torch.cat([init_ojqst, repeated_hidden_state], dim=1)
+            #(batch*feature x depth+qstsize+hidden_state_dim)
+            weights = self.applyAPsi(ojqst).view((batchsize,featuresize,-1))
+            #(batch x feature x nbrReference)
+            softmax_weights = F.softmax( weights, dim=1).unsqueeze(3)
+            #(batch x feature x nbrReference x 1)
+            
+            repeated_ojqst = ojqst.view(batchsize,featuresize,-1)
+            #(batchsize x feature x depth+qstsize)
+            repeated_ojqst = repeated_ojqst.unsqueeze(2)
+            #(batchsize x feature x 1 x depth+qstsize)
+            repeated_ojqst = repeated_ojqst.repeat(1,1,self.nbrReference,1)
+            #(batchsize x feature x nbrReference x depth+qstsize)
+            if self.args.withSoftmaxWeights :
+                ois = torch.sum( softmax_weights * repeated_ojqst, dim=1).squeeze()
+            else :
+                ois = torch.sum( weights * repeated_ojqst, dim=1).squeeze()
+            #(batch x nbrReference x depth+qstsize )
+            
+            ois = ois.view( batchsize, -1).unsqueeze(1)
+            #(batch x 1 x nbrReference*(depth+qstsize) )
+
+            ois = ois.repeat(1,featuresize,1)
+            #(batch x feature x nbrReference*(depth+qstsize) )
+            
+            oj = ojqst.view(batchsize,featuresize,-1)
+            #(batch x feature x depth+qstsize )
+            
+            x = torch.cat( [ois,oj],dim=2)
+            #(batch x feature x (nbrReference+1)*(depth+qstsize) )
+            
+            x = x.view( batchsize*featuresize, -1)
+            #(batch*feature x (nbrReference+1)*(depth+qstsize) )
+            
+            if self.linearNormalization :
+                gout = self.applyG(x)
+            else :
+                gout = self.applyGNoLN(x)
+
+            x_g = gout.view(batchsize,featuresize,-1)
+            #(batch x feature x args.units_per_MLP_layer )
+            
+            sumgout = x_g.sum(1).squeeze()
+            #(batch x args.units_per_MLP_layer )
+            
+            hiddenLayer_input = torch.cat( [sumgout, hidden_state], dim=1)
+            hidden_state = self.recurrentHiddenLayer( hiddenLayer_input)
+
+        f_input = torch.cat( [sumgout, hidden_state], dim=1)
+        foutput = self.applyF(f_input)
+
+        return foutput
+
+class RNNMultiReferenceSequentialAttentionRelationModule(RecurrentMultiReferenceSequentialAttentionRelationModule) :
+    def __init__(self, qst_dim=10,output_dim=32, hidden_state_dim=256, depth_dim=24,use_cuda=True, args=None) :
+        super(RNNMultiReferenceSequentialAttentionRelationModule,self).__init__( qst_dim=qst_dim,output_dim=output_dim, hidden_state_dim=hidden_state_dim,depth_dim=depth_dim,use_cuda=use_cuda, args=args)
+
+        self.initial_hidden_state = torch.zeros(1,self.args.batch_size,self.hidden_state_dim)
+        if self.use_cuda:
+            self.initial_hidden_state = self.initial_hidden_state.cuda()
+
+        self.recurrentHiddenLayer = nn.LSTM(input_size=self.args.units_per_MLP_layer, 
+                                            hidden_size=self.hidden_state_dim, 
+                                            num_layers=1,
+                                            bias=True, 
+                                            batch_first=False,
+                                            dropout=0.0,
+                                            bidirectional=False)
+        if self.use_cuda :
+            self = self.cuda()
+
+    def forward(self,ojqst, batchsize=32,featuresize=25) :
+        #(batch*feature x depth+qstsize)
+        
+        init_ojqst = ojqst 
+        hidden_state = self.initial_hidden_state
+        cell_state = self.initial_hidden_state
+        #(batch x hidden_state_dim)
+        for i in range(self.nbrRecurrentSteps) :
+            repeated_hidden_state = hidden_state.squeeze(0).repeat(featuresize, 1)
+            #(batch*feature x hidden_state_dim)
+            ojqst = torch.cat([init_ojqst, repeated_hidden_state], dim=1)
+            #(batch*feature x depth+qstsize+hidden_state_dim)
+            weights = self.applyAPsi(ojqst).view((batchsize,featuresize,-1))
+            #(batch x feature x nbrReference)
+            softmax_weights = F.softmax( weights, dim=1).unsqueeze(3)
+            #(batch x feature x nbrReference x 1)
+            
+            repeated_ojqst = ojqst.view(batchsize,featuresize,-1)
+            #(batchsize x feature x depth+qstsize)
+            repeated_ojqst = repeated_ojqst.unsqueeze(2)
+            #(batchsize x feature x 1 x depth+qstsize)
+            repeated_ojqst = repeated_ojqst.repeat(1,1,self.nbrReference,1)
+            #(batchsize x feature x nbrReference x depth+qstsize)
+            if self.args.withSoftmaxWeights :
+                ois = torch.sum( softmax_weights * repeated_ojqst, dim=1).squeeze()
+            else :
+                ois = torch.sum( weights * repeated_ojqst, dim=1).squeeze()
+            #(batch x nbrReference x depth+qstsize )
+            
+            ois = ois.view( batchsize, -1).unsqueeze(1)
+            #(batch x 1 x nbrReference*(depth+qstsize) )
+
+            ois = ois.repeat(1,featuresize,1)
+            #(batch x feature x nbrReference*(depth+qstsize) )
+            
+            oj = ojqst.view(batchsize,featuresize,-1)
+            #(batch x feature x depth+qstsize )
+            
+            x = torch.cat( [ois,oj],dim=2)
+            #(batch x feature x (nbrReference+1)*(depth+qstsize) )
+            
+            x = x.view( batchsize*featuresize, -1)
+            #(batch*feature x (nbrReference+1)*(depth+qstsize) )
+            
+            if self.linearNormalization :
+                gout = self.applyG(x)
+            else :
+                gout = self.applyGNoLN(x)
+
+            x_g = gout.view(batchsize,featuresize,-1)
+            #(batch x feature x args.units_per_MLP_layer )
+            
+            sumgout = x_g.sum(1).squeeze().unsqueeze(0)
+            #(seq_len=1 x batch x args.units_per_MLP_layer )
+            
+            (hidden_states, cell_states) = self.recurrentHiddenLayer( sumgout, (hidden_state,cell_state))
+            hidden_state = hidden_states[-1].unsqueeze(0)
+            cell_state =cell_states[-1]
+            #(seq_len=1 x batch x hidden_state_dim )
+            
+        hidden_state = hidden_state.view((-1, self.hidden_state_dim))
+        #cell_state =cell_state.view((-1, self.hidden_state_dim))
+            
+
+        f_input = torch.cat( [sumgout.squeeze(0), hidden_state], dim=1)
+        #( batch x args.units_per_MLP_layer + hidden_state_dim )
+        foutput = self.applyF(f_input)
+
+        return foutput
+
 class SARN(BasicModel):
     def __init__(self, args):
         
-        path = 'SequentialAttentionRN'
+        path = ''
+        if args.withLSTM:
+            path += 'LSTM-'
         if args.nbrParallelAttention > 1 :
-            path = 'P{}SARN'.format(args.nbrParallelAttention)
+            if args.nbrRecurrentSharedLayers > 1 :
+                path += 'S{}P{}SARN'.format(args.nbrRecurrentSharedLayers, args.nbrParallelAttention)
+            else :
+                path += 'P{}SARN'.format(args.nbrParallelAttention)
         if args.withModularityPrior:
-            path = 'ModularityPriored'+path
+            path = 'Mod'+path
         if args.NoXavierInit :
-            path += '+NoXavierInit'
+            path += '+NoX'
         if not(args.withLNGenerator) :
             path += '+NoLN'
         if args.units_per_MLP_layer!=0:
             path += '+MLP{}'.format(args.units_per_MLP_layer)
         if args.withLeakyReLU :
-            path += '+LeakyReLU'
-        #if args.conv_dim != 24:
+            path += '+LReLU'
+        
         path += '+Conv{}'.format(args.conv_dim)
         path += '+Batch{}'.format(args.batch_size)
         if args.withSoftmaxWeights :
@@ -1234,7 +1704,12 @@ class SARN(BasicModel):
         
         ##(number of filters per object+2 depth for the coordinates of object)*2+question vector
         #self.relationModule = SequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
-        self.relationModule = ParallelSequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
+        #self.relationModule = ParallelSequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
+        #self.relationModule = MultiReferenceSequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
+        if args.withLSTM:
+            self.relationModule = RNNMultiReferenceSequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
+        else:
+            self.relationModule = RecurrentMultiReferenceSequentialAttentionRelationModule(output_dim=10,depth_dim=(args.conv_dim+2),qst_dim=11,use_cuda=True, args=args )
         
         #for name,p in self.named_parameters() :
         #   print(name)

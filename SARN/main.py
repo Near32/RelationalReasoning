@@ -28,9 +28,9 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='N',
 parser.add_argument('--epochs', type=int, default=20, metavar='N',
                     help='number of epochs to train (default: 20)')
 parser.add_argument('--nbrModule', type=int, default=1,
-                    help='number of MHDPA heads to use per recurrent shared layer (default: 1)')
+                    help='When using MHDPA-RN: number of MHDPA heads to use per recurrent shared layer (default: 1).')
 parser.add_argument('--nbrRecurrentSharedLayers', type=int, default=1,
-                    help='number of recurrent shared layer application (default: 1)')
+                    help='number of recurrent shared layer application (default: 1).\nWhen using SARN: number of recurrent steps to apply the RecurrentMultiStepMultiReferenceSARN (default: 1).')
 parser.add_argument('--lr', type=float, default=0.0001, metavar='LR',
                     help='learning rate (default: 0.0001)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
@@ -49,6 +49,7 @@ parser.add_argument('--withLNGenerator',action='store_true',default=False)
 parser.add_argument('--NoXavierInit',action='store_true',default=False)
 parser.add_argument('--withSoftmaxWeights',action='store_true',default=False)
 parser.add_argument('--withModularityPrior',action='store_true',default=False)
+parser.add_argument('--withLSTM',action='store_true',default=False)
 parser.add_argument('--interactions_dim', type=int, default=0,
                     help='dimension of the entities interaction (default set to 0 --> 4*output_dim)')
 parser.add_argument('--units_per_MLP_layer', type=int, default=0,
