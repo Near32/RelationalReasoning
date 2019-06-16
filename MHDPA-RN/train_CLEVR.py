@@ -37,7 +37,7 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=100, metavar='N',
+parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--resume', type=str,
                     help='resume from model stored')
@@ -59,6 +59,8 @@ parser.add_argument('--hidden_size', type=int, default=0,
 parser.add_argument('--nbr_RNN_layers', type=int, default=0,
                     help='numbers of LSTM RNN layers for the encoder of CLEVR questions.')
 
+parser.add_argument('--name', type=str, default='model')
+
 parser.add_argument('--dataset_path', type=str, default='../DATASETS/CLEVR_v1.0/')
 parser.add_argument('--train_data_path', type=str, default='../DATASETS/CLEVR_v1.0/train_questions.h5')
 parser.add_argument('--train_vocab_path', type=str, default='../DATASETS/CLEVR_v1.0/vocab.json')
@@ -68,10 +70,6 @@ parser.add_argument('--val_data_path', type=str, default='../DATASETS/CLEVR_v1.0
 parser.add_argument('--val_vocab_path', type=str, default='../DATASETS/CLEVR_v1.0/vocab.json')
 parser.add_argument('--val_image_path', type=str, default='../DATASETS/CLEVR_v1.0/val_questions.h5.paths.npz')
 
-parser.add_argument('--test_data_path', type=str, default='../DATASETS/CLEVR_v1.0/test_questions.h5')
-parser.add_argument('--test_vocab_path', type=str, default='../DATASETS/CLEVR_v1.0/vocab.json')
-parser.add_argument('--test_image_path', type=str, default='../DATASETS/CLEVR_v1.0/test_questions.h5.paths.npz')
-    
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 kwargs = dict(args._get_kwargs())
@@ -97,18 +95,12 @@ def load_data(args):
                                     image_path=args.val_image_path,
                                     batch_size=args.batch_size, shuffle=True)
 
-    test_loader = CLEVR_DataLoader( dataset_path=args.dataset_path,
-                                    data_path=args.test_data_path,
-                                    vocab_path=args.test_vocab_path,
-                                    image_path=args.test_image_path,
-                                    batch_size=args.batch_size, shuffle=True)
+    return train_loader, val_loader
 
-    return train_loader, val_loader, test_loader
-
-def train(epoch, loader, val_loader, test_loader, args):
-    loaders = {'train':loader, 'val':val_loader, 'test':test_loader}
+def train(epoch, loader, val_loader, args):
+    loaders = {'train':loader, 'val':val_loader}
     
-    for phase in ['train','val', 'test']:
+    for phase in ['train','val']:
         if phase == 'train':
             model.train()
         else:
@@ -142,19 +134,32 @@ def train(epoch, loader, val_loader, test_loader, args):
                         100. * batch_idx / len(loaders[phase])
                         )
                 )
-            
-                for family_key in family_corrects:
-                    family_name = family_key#family_idx2name(family_key)
-                    acc = 100 * family_corrects[family_key] / family_counts[family_key]
-                    #print('{} :: accuracy: {:.0f}% '.format(family_key, acc ) )
-                    #print('{}/{}/Acc {} :::: val {} / count {} :: idx {}'.format(phase, family_name, acc, family_corrects[family_key], family_counts[family_key], epoch*iter_per_epoch+batch_idx) )
-                    writer.add_scalar('{}/{}/Acc'.format(phase, family_name), acc, (epoch-1)*iter_per_epoch+batch_idx)
-            
+        
+                sum_corrects = sum( list(family_corrects.values()) )
+                sum_counts = sum( list(family_counts.values()) ) 
+                acc = 100 * sum_corrects / sum_counts
+                print('{} :: accuracy: {:.0f}% '.format(phase, acc ) )
+                writer.add_scalar('Acc/{}'.format(phase), acc, (epoch-1)*iter_per_epoch+batch_idx)
+
+
+        sum_corrects = sum( list(family_corrects.values()) )
+        sum_counts = sum( list(family_counts.values()) ) 
+        acc = 100 * sum_corrects / sum_counts
+        print('{} :: final accuracy: {:.0f}% '.format(phase, acc ) )
+        writer.add_scalar('Accuracy/{}'.format(phase), acc, (epoch)*iter_per_epoch)    
+        
+        for family_key in family_corrects:
+            family_name = family_key#family_idx2name(family_key)
+            acc = 100 * family_corrects[family_key] / family_counts[family_key]
+            #print('{} :: accuracy: {:.0f}% '.format(family_key, acc ) )
+            #print('{}/{}/Acc {} :::: val {} / count {} :: idx {}'.format(phase, family_name, acc, family_corrects[family_key], family_counts[family_key], epoch*iter_per_epoch+batch_idx) )
+            writer.add_scalar('{}/{}/Acc'.format(phase, family_name), acc, (epoch)*iter_per_epoch)
+    
 
 
 
 
-train_loader, val_loader, test_loader = load_data(args)
+train_loader, val_loader = load_data(args)
 kwargs['vocab_size'] = train_loader.getVocabSize()
 kwargs['answer_vocab_size'] = train_loader.getAnswerVocabSize()
 
@@ -167,7 +172,7 @@ elif args.model=='RN2' :
 else :
   model = MHDPA_RN(kwargs)
 
-model_dirs = './CLEVR_model_3LMHOutput'
+model_dirs = './CLEVR_models/'+args.name
 
 ld = os.path.join(model_dirs,model.name)
 writer = SummaryWriter(logdir=ld)
@@ -190,5 +195,5 @@ if args.resume:
         print('==> loaded checkpoint {}'.format(filename))
 
 for epoch in range(1, args.epochs + 1):
-    train(epoch, train_loader, val_loader, test_loader, args)
+    train(epoch, train_loader, val_loader, args)
     model.save_model(epoch)
