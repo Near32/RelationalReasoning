@@ -12,7 +12,7 @@ import torch
 from torch.autograd import Variable
 
 from tensorboardX import SummaryWriter
-from model import MHDPA_RN, RN, RN2, CNN_MLP
+from models import MHDPA_RN, RN, RN2, CNN_MLP
 from utils import CLEVR_DataLoader
 
 # Training settings
@@ -169,7 +169,7 @@ elif args.model=='RN2' :
 else :
   model = MHDPA_RN(kwargs)
 
-model_dirs = './CLEVR_models/'+args.name
+model_dirs = './results_CLEVR/'+args.name
 
 ld = os.path.join(model_dirs,model.name)
 writer = SummaryWriter(logdir=ld)
