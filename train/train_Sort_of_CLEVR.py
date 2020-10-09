@@ -1,11 +1,9 @@
-"""""""""
-Pytorch implementation of "A simple neural network module for relational reasoning
-Code is based on pytorch/examples/mnist (https://github.com/pytorch/examples/tree/master/mnist)
-"""""""""
 from __future__ import print_function
 import argparse
 import os
-#import cPickle as pickle
+import sys
+sys.path.append(os.path.abspath('..'))
+
 import pickle
 import random
 import numpy as np
@@ -14,13 +12,15 @@ import torch
 from torch.autograd import Variable
 
 from tensorboardX import SummaryWriter
-from model import MHDPA_RN, RN, RN2, CNN_MLP
+from models import MHDPA_RN, RN, RN2, CNN_MLP
 
 
 # Training settings
-parser = argparse.ArgumentParser(description='PyTorch Relational-Network sort-of-CLVR Example')
+parser = argparse.ArgumentParser(description='PyTorch Relational-Reasoning Networks on Sort-of-CLEVR Example')
 parser.add_argument('--model', type=str, choices=['RN', 'RN2', 'MHDPA-RN', 'CNN_MLP'], default='MHDPA-RN', 
-                    help='resume from model stored')
+                    help='model architecture to train')
+parser.add_argument('--name', type=str, default='model', 
+                    help='name to give to the training model')
 parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                     help='input batch size for training (default: 64)')
 parser.add_argument('--epochs', type=int, default=20, metavar='N',
@@ -68,10 +68,7 @@ elif args.model=='RN2' :
 else :
   model = MHDPA_RN(kwargs)
 
-#model_dirs = './model_SimpleMHOutput'
-#model_dirs = './model_2LMHOutput'
-model_dirs = './model_3LMHOutput'
-#model_dirs = './model_4LMHOutput'
+model_dirs = './results_Sort-of-CLEVR/'+args.name
 bs = args.batch_size
 input_img = torch.FloatTensor(bs, 3, 75, 75)
 input_qst = torch.FloatTensor(bs, 11)
